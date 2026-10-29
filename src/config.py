@@ -54,7 +54,12 @@ class InferenceConfig:
     min_tracking_confidence: float = 0.50
 
     # Decision and hysteresis thresholds
-    confidence_threshold: float = 0.65  # Predictions with lower prob marked UNCERTAIN
+    # NOTE: 0.55 was chosen empirically. The confusable fist letters (M/N/R/U) have
+    # holdout max-softmax confidence in the ~0.38-0.65 band; a 0.65+ threshold marked
+    # most of their frames UNCERTAIN, so no consensus could ever form and the HUD
+    # appeared "always uncertain". 0.55 keeps those letters emittable while still
+    # rejecting genuine noise (negative-rejection rate remains 100% at this level).
+    confidence_threshold: float = 0.55  # Predictions with lower prob marked UNCERTAIN
     smoothing_window_size: int = 7       # Frames in sliding window
     majority_threshold_ratio: float = 0.60  # Fraction of window that must agree
     debounce_cooldown_seconds: float = 0.80  # Cooldown before repeating same letter

@@ -41,25 +41,83 @@ def test_confidence_filter():
 
 
 def test_temporal_filter_majority_voting():
-    """Verify sliding window stabilizes predictions and rejects intermittent noise."""
+    """Verify sliding window stabilizes predictions and rejects intermittent noise.
+
+    With a padded-window denominator, consensus requires ceil(window*ratio)
+    occurrences of the same label within the fixed-size window.
+    """
     temp_filter = TemporalFilter(window_size=5, majority_ratio=0.60)
 
-    # Window partially filled: must return None
+    # Required consensus count: ceil(5 * 0.60) = 3
+    # Window partially filled with only 2 'A's -> below threshold, must return None
     assert temp_filter.add("A") is None
     assert temp_filter.add("A") is None
 
-    # Noise frame occurs
+    # Noise frame occurs (still only 2 'A's)
     assert temp_filter.add("B") is None
 
-    # Consensus reached ('A' appears 4 out of 5 times)
-    assert temp_filter.add("A") is None
-    result = temp_filter.add("A")
-    assert result == "A"
+    # Third 'A' reaches the required count of 3 out of the padded window of 5
+    assert temp_filter.add("A") == "A"
+
+    # Sustained consensus keeps returning 'A'
+    assert temp_filter.add("A") == "A"
+
+
+def test_temporal_filter_noise_rejection():
+    """Intermittent single-frame noise must never produce a consensus."""
+    temp_filter = TemporalFilter(window_size=5, majority_ratio=0.80)  # need 4/5
+
+    seq = ["A", "B", "A", "B", "A", "B", "A", "B"]
+    for label in seq:
+        assert temp_filter.add(label) is None
+
+
+def test_temporal_filter_uncertain_erodes_consensus():
+    """UNCERTAIN / None frames inject neutral markers that erode consensus."""
+    tf = TemporalFilter(window_size=5, majority_ratio=0.60)  # need 3/5
+
+    # Build consensus on 'A'
+    assert tf.add("A") is None
+    assert tf.add("A") is None
+    assert tf.add("A") == "A"   # 3 A's -> consensus
+
+    # One UNCERTAIN frame: buffer [A,A,A,N] (padded view) -> '__NONE__' ties with
+    # 'A' at 3 and becomes most_common, so consensus drops immediately.
+    assert tf.add("UNCERTAIN") is None
+
+    # More neutral frames keep the window eroded; 'A' falls below the required count
+    assert tf.add(None) is None      # buffer [A,A,A,N,N] -> A=3 but NONE wins tie
+    assert tf.add(None) is None      # buffer [A,A,N,N,N] -> no label consensus
+
+
+def test_temporal_filter_reset_clears_state():
+    """After reset(), the window must behave like a fresh filter."""
+    tf = TemporalFilter(window_size=5, majority_ratio=0.60)
+    tf.add("A")
+    tf.add("A")
+    tf.add("A")
+    tf.reset()
+    assert len(tf.buffer) == 0
+    assert tf.add("B") is None  # cannot inherit prior consensus
+
+
+class FakeClock:
+    """Deterministic injectable clock for debounce tests (no wall-clock sleeps)."""
+
+    def __init__(self, start: float = 0.0):
+        self.now = start
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
 
 
 def test_duplicate_suppressor_debounce():
     """Verify repeating signs are suppressed until cooldown period passes."""
-    suppressor = DuplicateSuppressor(cooldown_seconds=0.30)
+    clock = FakeClock()
+    suppressor = DuplicateSuppressor(cooldown_seconds=0.30, clock=clock)
 
     # First emission of 'H' accepted immediately
     assert suppressor.process("H") == "H"
@@ -73,9 +131,17 @@ def test_duplicate_suppressor_debounce():
     # Immediate second emission of 'E' suppressed
     assert suppressor.process("E") is None
 
-    # Wait for cooldown to elapse
-    time.sleep(0.35)
+    # Advance the virtual clock past the cooldown (deterministic, no sleep)
+    clock.advance(0.35)
     # Now second emission of 'E' is accepted
+    assert suppressor.process("E") == "E"
+
+    # Just under the cooldown again -> suppressed
+    clock.advance(0.25)
+    assert suppressor.process("E") is None
+
+    # Past the cooldown -> accepted
+    clock.advance(0.10)
     assert suppressor.process("E") == "E"
 
 

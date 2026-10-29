@@ -202,7 +202,7 @@ def build_gradio_app() -> gr.Blocks:
                             conf_slider = gr.Slider(
                                 minimum=0.40,
                                 maximum=0.95,
-                                value=0.65,
+                                value=DEFAULT_CONFIG.inference.confidence_threshold,
                                 step=0.05,
                                 label="Confidence Rejection Threshold (tau)",
                                 info="Predictions below this score are marked UNCERTAIN."
