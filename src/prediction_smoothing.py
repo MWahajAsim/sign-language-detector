@@ -8,13 +8,15 @@ from collections import Counter, deque
 import time
 from typing import Deque, Optional, Tuple
 
+import numpy as np
+
 from src.models import PredictionResult
 
 
 class ConfidenceFilter:
     """Filters out predictions that do not meet the minimum confidence threshold."""
 
-    def __init__(self, threshold: float = 0.70):
+    def __init__(self, threshold: float = 0.55):
         self.threshold = threshold
 
     def check(self, prediction: PredictionResult) -> Tuple[Optional[str], float, bool]:
@@ -31,13 +33,21 @@ class ConfidenceFilter:
 class TemporalFilter:
     """Sliding window majority voting buffer."""
 
-    def __init__(self, window_size: int = 7, majority_ratio: float = 0.70):
-        self.window_size = window_size
-        self.majority_ratio = majority_ratio
-        self.buffer: Deque[str] = deque(maxlen=window_size)
+    def __init__(self, window_size: int = 7, majority_ratio: float = 0.60):
+        self.window_size = max(1, int(window_size))
+        # Clamp ratio into (0, 1] so misconfigured sliders cannot make the filter
+        # either never vote (ratio > 1) or emit on a single noisy frame (ratio <= 0).
+        self.majority_ratio = min(1.0, max(0.05, float(majority_ratio)))
+        self.buffer: Deque[str] = deque(maxlen=self.window_size)
 
     def add(self, label: Optional[str]) -> Optional[str]:
         """Push label to sliding window and return stable label if consensus is reached.
+
+        The buffer always holds exactly ``window_size`` entries (shorter windows are
+        padded with '__NONE__' markers), so the consensus denominator is constant
+        regardless of how many frames have been observed so far. This keeps the
+        stability requirement deterministic instead of drifting between partial and
+        full windows.
 
         Args:
             label: Detected label string, 'UNCERTAIN', or None (hand absent).
@@ -46,15 +56,16 @@ class TemporalFilter:
             Stable label string if agreement >= majority_ratio, else None.
         """
         if label is None or label == "UNCERTAIN":
-            # If hand is absent or uncertain, clear or insert marker
+            # Hand absent or low-confidence frame: inject a neutral marker so that
+            # uncertainty actively erodes any pending consensus.
             self.buffer.append("__NONE__")
             return None
 
         self.buffer.append(label)
 
-        # Check if window is full enough
-        if len(self.buffer) < self.window_size:
-            return None
+        # Pad short buffers with neutral markers so every vote uses the same
+        # denominator (the full window size).
+        effective_total = max(len(self.buffer), self.window_size)
 
         # Count frequencies
         counts = Counter(self.buffer)
@@ -63,9 +74,9 @@ class TemporalFilter:
         if most_common_label == "__NONE__":
             return None
 
-        # Check consensus ratio
-        required_count = int(self.window_size * self.majority_ratio)
-        if count >= required_count:
+        # Check consensus ratio against the full window capacity
+        required_count = int(np.ceil(self.window_size * self.majority_ratio))
+        if count >= required_count and count / effective_total >= self.majority_ratio:
             return most_common_label
 
         return None
@@ -76,10 +87,16 @@ class TemporalFilter:
 
 
 class DuplicateSuppressor:
-    """Debounces consecutively emitted characters using a cooldown interval."""
+    """Debounces consecutively emitted characters using a cooldown interval.
 
-    def __init__(self, cooldown_seconds: float = 0.80):
+    Uses an injectable clock so the behavior is fully deterministic in tests
+    and offline video processing (where wall-clock time does not reflect the
+    video's timeline).
+    """
+
+    def __init__(self, cooldown_seconds: float = 0.80, clock=time.time):
         self.cooldown_seconds = cooldown_seconds
+        self.clock = clock
         self.last_emitted_label: Optional[str] = None
         self.last_emitted_time: float = 0.0
 
@@ -95,7 +112,7 @@ class DuplicateSuppressor:
         if stable_label is None:
             return None
 
-        current_time = time.time()
+        current_time = float(self.clock())
         elapsed = current_time - self.last_emitted_time
 
         # If it's a different letter than the last one, accept immediately
@@ -123,14 +140,15 @@ class PredictionSmoothingEngine:
 
     def __init__(
         self,
-        confidence_threshold: float = 0.70,
+        confidence_threshold: float = 0.55,
         window_size: int = 7,
-        majority_ratio: float = 0.70,
+        majority_ratio: float = 0.60,
         debounce_cooldown: float = 0.80,
+        clock=time.time,
     ):
         self.confidence_filter = ConfidenceFilter(confidence_threshold)
         self.temporal_filter = TemporalFilter(window_size, majority_ratio)
-        self.duplicate_suppressor = DuplicateSuppressor(debounce_cooldown)
+        self.duplicate_suppressor = DuplicateSuppressor(debounce_cooldown, clock=clock)
 
     def process(
         self, prediction: Optional[PredictionResult]
