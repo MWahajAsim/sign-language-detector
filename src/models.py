@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
+import warnings
+warnings.filterwarnings("ignore")
 import joblib
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
@@ -86,6 +88,8 @@ class SignClassifier:
 
         self.class_names = list(class_names)
         self.estimator.fit(X, y)
+        if hasattr(self.estimator, "n_jobs"):
+            self.estimator.n_jobs = 1  # Fast single-sample inference without threadpool overhead
         return self
 
     def predict(
@@ -196,5 +200,7 @@ class SignClassifier:
 
         instance = cls(model_type=model_type)
         instance.estimator = joblib.load(model_file)
+        if hasattr(instance.estimator, "n_jobs"):
+            instance.estimator.n_jobs = 1  # Fast single-sample inference
         instance.class_names = class_names
         return instance

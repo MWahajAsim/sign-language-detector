@@ -46,7 +46,13 @@ class LandmarkNormalizer:
         wrist = coords[0, :].copy()
         centered = coords - wrist  # Wrist becomes (0, 0, 0)
 
-        # Step 2: Scale Invariance (Divide by maximum Euclidean distance from wrist)
+        # Step 2: Handedness Invariance (Canonical Right-Hand Alignment)
+        # For a right hand facing camera, Pinky MCP (17) is to the right (+X) of Index MCP (5).
+        # If Pinky is to the left (-X), it indicates a Left hand or horizontally mirrored feed.
+        if centered[17, 0] < centered[5, 0]:
+            centered[:, 0] = -centered[:, 0]
+
+        # Step 3: Scale Invariance (Divide by maximum Euclidean distance from wrist)
         distances = np.linalg.norm(centered, axis=1)  # shape (21,)
         max_dist = np.max(distances)
 
@@ -56,7 +62,7 @@ class LandmarkNormalizer:
         else:
             normalized = centered
 
-        # Step 3: Flatten to 63-element feature vector
+        # Step 4: Flatten to 63-element feature vector
         return normalized.flatten().astype(np.float32)
 
     @classmethod

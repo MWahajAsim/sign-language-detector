@@ -38,7 +38,7 @@ class HandLandmarkDetector:
         self,
         static_image_mode: bool = False,
         max_num_hands: int = 1,
-        min_detection_confidence: float = 0.65,
+        min_detection_confidence: float = 0.50,
         min_tracking_confidence: float = 0.50,
         model_path: Optional[Path] = None,
     ):
@@ -107,7 +107,8 @@ class HandLandmarkDetector:
                 - raw_landmarks_data: Data object for visual drawing.
         """
         if self._mode == "tasks":
-            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+            frame_data = np.ascontiguousarray(rgb_frame, dtype=np.uint8)
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_data)
             result = self.detector.detect(mp_image)
 
             if not result.hand_landmarks or len(result.hand_landmarks) == 0:

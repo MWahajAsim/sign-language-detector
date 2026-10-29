@@ -8,7 +8,7 @@ and text accumulation into a clean, reusable API.
 from dataclasses import dataclass
 from pathlib import Path
 import sys
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Union
 import cv2
 import numpy as np
 
@@ -214,6 +214,66 @@ class InferenceEngine:
             hand_detected=True,
             probabilities=pred.probabilities,
         )
+
+    def process_video_file(
+        self,
+        video_path: Union[str, Path],
+        output_path: Optional[Union[str, Path]] = None,
+        draw_landmarks: bool = True,
+        mirror: bool = False,
+    ) -> Tuple[str, str, int]:
+        """Process an entire video file, annotating frames and accumulating text.
+
+        Args:
+            video_path: Path to source video file (MP4, AVI, MOV, etc.).
+            output_path: Optional path for annotated output video. If None, saves to temp file.
+            draw_landmarks: Whether to render landmark skeleton.
+            mirror: Whether to horizontally flip video frames.
+
+        Returns:
+            Tuple of (output_video_path, accumulated_text, total_frames_processed).
+        """
+        import tempfile
+
+        v_path = Path(video_path)
+        if not v_path.exists():
+            raise FileNotFoundError(f"Video file not found at: {v_path}")
+
+        cap = cv2.VideoCapture(str(v_path))
+        if not cap.isOpened():
+            raise ValueError(f"Could not open video file: {v_path}")
+
+        fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        target_w = self.config.inference.frame_width
+        target_h = self.config.inference.frame_height
+
+        if output_path is None:
+            out_file = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False).name
+        else:
+            out_file = str(output_path)
+
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(out_file, fourcc, fps, (target_w, target_h))
+
+        frame_count = 0
+        try:
+            while True:
+                ret, frame = cap.read()
+                if not ret or frame is None:
+                    break
+
+                output: InferenceOutput = self.process_frame(
+                    frame,
+                    draw_landmarks=draw_landmarks,
+                    mirror=mirror,
+                )
+                writer.write(output.annotated_frame)
+                frame_count += 1
+        finally:
+            cap.release()
+            writer.release()
+
+        return out_file, self.text_accumulator.get_text(), frame_count
 
     def _render_hud(
         self,

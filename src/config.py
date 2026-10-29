@@ -50,13 +50,13 @@ class InferenceConfig:
 
     # Hand detection parameters
     max_num_hands: int = 1
-    min_detection_confidence: float = 0.65
+    min_detection_confidence: float = 0.50
     min_tracking_confidence: float = 0.50
 
     # Decision and hysteresis thresholds
-    confidence_threshold: float = 0.70  # Predictions with lower prob marked UNCERTAIN
+    confidence_threshold: float = 0.65  # Predictions with lower prob marked UNCERTAIN
     smoothing_window_size: int = 7       # Frames in sliding window
-    majority_threshold_ratio: float = 0.70  # Fraction of window that must agree
+    majority_threshold_ratio: float = 0.60  # Fraction of window that must agree
     debounce_cooldown_seconds: float = 0.80  # Cooldown before repeating same letter
 
     # Camera capture settings

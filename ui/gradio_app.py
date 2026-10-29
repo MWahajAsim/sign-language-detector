@@ -1,7 +1,7 @@
 """Interactive Gradio Web Application for Sign Language Recognition.
 
-Provides real-time webcam inference, static image analysis, landmark visualization,
-confidence filtering, temporal smoothing controls, and text accumulation.
+Provides real-time webcam inference, recorded video file transcription, static photo analysis,
+landmark visualization, confidence filtering, temporal smoothing controls, and sentence accumulation.
 """
 
 from pathlib import Path
@@ -52,7 +52,7 @@ def process_webcam_frame(
 
     # Gradio provides RGB frame directly; convert to BGR for OpenCV-based engine
     bgr_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-    output: InferenceOutput = eng.process_frame(bgr_frame, draw_landmarks=draw_landmarks, mirror=False)
+    output: InferenceOutput = eng.process_frame(bgr_frame, draw_landmarks=draw_landmarks, mirror=True)
 
     # Convert annotated BGR frame back to RGB for Gradio display
     annotated_rgb = cv2.cvtColor(output.annotated_frame, cv2.COLOR_BGR2RGB)
@@ -68,18 +68,45 @@ def process_webcam_frame(
     )
 
 
+def process_uploaded_video(
+    video_path: Optional[str],
+    draw_landmarks: bool,
+    confidence_threshold: float,
+    window_size: int,
+) -> Tuple[Optional[str], str, str]:
+    """Process an uploaded video file frame-by-frame and transcribe into a sentence.
+
+    Returns:
+        Tuple of (annotated_video_path, accumulated_sentence, status_message)
+    """
+    if not video_path:
+        return None, "", "Please upload a video file first."
+
+    eng = get_inference_engine()
+    eng.set_confidence_threshold(confidence_threshold)
+    eng.set_smoothing_window(int(window_size))
+
+    out_file, sentence, frame_count = eng.process_video_file(
+        video_path=video_path,
+        draw_landmarks=draw_landmarks,
+        mirror=False,
+    )
+    status_summary = f"✅ Analyzed {frame_count} video frames. Generated Sentence: '{sentence}'"
+    return out_file, sentence, status_summary
+
+
 def process_static_image(
     image: np.ndarray,
     draw_landmarks: bool,
     confidence_threshold: float,
-) -> Tuple[Optional[np.ndarray], str, str, str, Dict[str, float]]:
+) -> Tuple[Optional[np.ndarray], str, str, str, Dict[str, float], str]:
     """Process an uploaded static image.
 
     Returns:
-        Tuple of (annotated_image, predicted_label, confidence_str, status_str, top_probabilities)
+        Tuple of (annotated_image, predicted_label, confidence_str, status_str, top_probabilities, sentence)
     """
     if image is None:
-        return None, "None", "0.0%", "Please upload an image.", {}
+        return None, "None", "0.0%", "Please upload an image.", {}, ""
 
     eng = get_inference_engine()
     eng.set_confidence_threshold(confidence_threshold)
@@ -99,6 +126,7 @@ def process_static_image(
         conf_display,
         output.status_message,
         top_probs,
+        eng.text_accumulator.get_text(),
     )
 
 
@@ -141,7 +169,7 @@ def build_gradio_app() -> gr.Blocks:
         gr.Markdown(
             """
             <div class="banner-title">🖐️ Sign Language Detection & Recognition System</div>
-            <div class="banner-subtitle">Real-Time ASL Fingerspelling Recognition using MediaPipe Hands & Machine Learning</div>
+            <div class="banner-subtitle">Real-Time ASL Fingerspelling Recognition & Sentence Transcription using MediaPipe Hands & Machine Learning</div>
             <div class="disclaimer-box">
                 <strong>⚠️ ETHICAL & SCOPE NOTICE:</strong> This application is an educational and assistive prototype strictly designed for isolated static American Sign Language (ASL) fingerspelling (letters A-Y, excluding motion letters J & Z). It does <em>not</em> translate natural continuous sign language or grammar, and must <strong>never</strong> replace qualified human sign language interpreters in healthcare, legal, or emergency situations.
             </div>
@@ -156,8 +184,13 @@ def build_gradio_app() -> gr.Blocks:
                         webcam_input = gr.Image(
                             sources=["webcam"],
                             streaming=True,
-                            label="Live Camera Input",
+                            label="Live Camera Stream",
                             type="numpy",
+                        )
+                        webcam_output = gr.Image(
+                            label="Real-Time Detection Feed (Skeleton & HUD)",
+                            type="numpy",
+                            interactive=False,
                         )
                         with gr.Row():
                             draw_landmarks_cb = gr.Checkbox(
@@ -167,9 +200,9 @@ def build_gradio_app() -> gr.Blocks:
 
                         with gr.Accordion("⚙️ Advanced Detection Settings", open=False):
                             conf_slider = gr.Slider(
-                                minimum=0.50,
+                                minimum=0.40,
                                 maximum=0.95,
-                                value=0.70,
+                                value=0.65,
                                 step=0.05,
                                 label="Confidence Rejection Threshold (tau)",
                                 info="Predictions below this score are marked UNCERTAIN."
@@ -224,7 +257,7 @@ def build_gradio_app() -> gr.Blocks:
                     fn=process_webcam_frame,
                     inputs=[webcam_input, draw_landmarks_cb, conf_slider, smooth_slider],
                     outputs=[
-                        webcam_input,
+                        webcam_output,
                         live_prediction,
                         live_confidence,
                         live_status,
@@ -236,7 +269,56 @@ def build_gradio_app() -> gr.Blocks:
                 btn_backspace.click(fn=handle_backspace, inputs=[], outputs=[accumulated_text_box])
                 btn_clear.click(fn=handle_clear, inputs=[], outputs=[accumulated_text_box])
 
-            # ======================== TAB 2: STATIC IMAGE UPLOAD ========================
+            # ======================== TAB 2: VIDEO FILE ANALYSIS ========================
+            with gr.TabItem("🎬 Video File Analysis"):
+                with gr.Row():
+                    with gr.Column(scale=3):
+                        video_file_input = gr.Video(
+                            sources=["upload"],
+                            label="Upload Sign Language Video (MP4 / AVI / MOV / WebM)",
+                        )
+                        btn_process_video = gr.Button("🚀 Process Video & Generate Sentence", variant="primary")
+                        annotated_video_output = gr.Video(
+                            label="Annotated Video Output (with Hand Skeleton & Tracking HUD)",
+                            interactive=False,
+                        )
+
+                    with gr.Column(scale=2):
+                        with gr.Group():
+                            gr.Markdown("### 📝 Transcribed Sentence from Video")
+                            video_sentence_box = gr.Textbox(
+                                label="Sentence Output",
+                                value="",
+                                lines=3,
+                                elem_classes=["text-display-box"],
+                                interactive=True,
+                            )
+                            with gr.Row():
+                                btn_vid_space = gr.Button("␣ Space", variant="secondary")
+                                btn_vid_backspace = gr.Button("⌫ Backspace", variant="secondary")
+                                btn_vid_clear = gr.Button("🗑️ Clear", variant="stop")
+
+                            video_status_box = gr.Textbox(
+                                label="Video Processing Status",
+                                value="Upload a video and click 'Process Video'.",
+                                interactive=False,
+                            )
+
+                btn_process_video.click(
+                    fn=process_uploaded_video,
+                    inputs=[video_file_input, draw_landmarks_cb, conf_slider, smooth_slider],
+                    outputs=[
+                        annotated_video_output,
+                        video_sentence_box,
+                        video_status_box,
+                    ],
+                )
+
+                btn_vid_space.click(fn=handle_add_space, inputs=[], outputs=[video_sentence_box])
+                btn_vid_backspace.click(fn=handle_backspace, inputs=[], outputs=[video_sentence_box])
+                btn_vid_clear.click(fn=handle_clear, inputs=[], outputs=[video_sentence_box])
+
+            # ======================== TAB 3: STATIC IMAGE UPLOAD ========================
             with gr.TabItem("🖼️ Static Image Analysis"):
                 with gr.Row():
                     with gr.Column(scale=3):
@@ -246,33 +328,60 @@ def build_gradio_app() -> gr.Blocks:
                             label="Upload Hand Sign Photo (JPG / PNG)",
                         )
                         btn_analyze = gr.Button("🔍 Analyze Hand Sign", variant="primary")
+                        image_output = gr.Image(
+                            label="Annotated Hand (Skeleton & Diagnostics)",
+                            interactive=False,
+                            type="numpy",
+                        )
 
                     with gr.Column(scale=2):
-                        static_prediction = gr.Textbox(label="Predicted Letter", interactive=False)
-                        static_confidence = gr.Textbox(label="Confidence Score", interactive=False)
-                        static_status = gr.Textbox(label="Status", interactive=False)
-                        prob_chart = gr.Label(label="Top Class Probabilities", num_top_classes=5)
-                        btn_append = gr.Button("➕ Append to Sentence", variant="secondary")
+                        with gr.Group():
+                            gr.Markdown("### 🔍 Image Prediction Results")
+                            with gr.Row():
+                                static_prediction = gr.Textbox(label="Predicted Letter", interactive=False)
+                                static_confidence = gr.Textbox(label="Confidence Score", interactive=False)
+                            static_status = gr.Textbox(label="Status", interactive=False)
+                            prob_chart = gr.Label(label="Top Class Probabilities", num_top_classes=5)
+
+                        with gr.Group():
+                            gr.Markdown("### 📝 Accumulated Sentence Buffer")
+                            photo_sentence_box = gr.Textbox(
+                                label="Current Sentence",
+                                value="",
+                                lines=2,
+                                elem_classes=["text-display-box"],
+                                interactive=True,
+                            )
+                            with gr.Row():
+                                btn_append = gr.Button("➕ Append Sign to Sentence", variant="primary")
+                                btn_photo_space = gr.Button("␣ Space", variant="secondary")
+                                btn_photo_backspace = gr.Button("⌫ Backspace", variant="secondary")
+                                btn_photo_clear = gr.Button("🗑️ Clear", variant="stop")
 
                 btn_analyze.click(
                     fn=process_static_image,
                     inputs=[image_input, draw_landmarks_cb, conf_slider],
                     outputs=[
-                        image_input,
+                        image_output,
                         static_prediction,
                         static_confidence,
                         static_status,
                         prob_chart,
+                        photo_sentence_box,
                     ],
                 )
 
                 btn_append.click(
                     fn=handle_append_from_image,
                     inputs=[static_prediction],
-                    outputs=[accumulated_text_box],
+                    outputs=[photo_sentence_box],
                 )
 
-            # ======================== TAB 3: SYSTEM SPECS & VOCABULARY ========================
+                btn_photo_space.click(fn=handle_add_space, inputs=[], outputs=[photo_sentence_box])
+                btn_photo_backspace.click(fn=handle_backspace, inputs=[], outputs=[photo_sentence_box])
+                btn_photo_clear.click(fn=handle_clear, inputs=[], outputs=[photo_sentence_box])
+
+            # ======================== TAB 4: SYSTEM SPECS & VOCABULARY ========================
             with gr.TabItem("ℹ️ Supported Signs & Documentation"):
                 gr.Markdown(
                     r"""
@@ -287,7 +396,7 @@ def build_gradio_app() -> gr.Blocks:
                     
                     ### 🔬 Pipeline Specifications
                     - **Vision Backbone:** MediaPipe Hands (21 3D anatomical landmarks).
-                    - **Normalization:** Invariant wrist-centering ($P'_i = P_i - P_0$) and Euclidean distance scaling ($P''_i = P'_i / d_{\max}$).
+                    - **Normalization:** Invariant wrist-centering ($P'_i = P_i - P_0$), automatic handedness reflection ($P'_x = -P'_x$ when left-handed), and Euclidean distance scaling ($P''_i = P'_i / d_{\max}$).
                     - **Model Engine:** 150-Tree Random Forest Classifier with Platt-calibrated probability distributions.
                     - **Temporal Hysteresis:** 7-frame sliding window with majority consensus filtering and 0.8s duplicate debounce cooldown.
                     """

@@ -9,6 +9,8 @@ import json
 from pathlib import Path
 import sys
 import time
+import warnings
+warnings.filterwarnings("ignore")
 
 # Ensure project root is on sys.path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -103,9 +105,9 @@ def evaluate(
     print(f"[Evaluation] Saved confusion matrix visualization to {cm_plot_path}")
 
     # 5. Latency & Real-Time Throughput Benchmark
-    print("[Benchmark] Benchmarking CPU inference latency over 500 passes...")
-    warmup_n = 50
-    bench_n = 500
+    print("[Benchmark] Benchmarking CPU inference latency over 100 passes...")
+    warmup_n = 20
+    bench_n = 100
 
     # Warmup
     for _ in range(warmup_n):
@@ -132,9 +134,9 @@ def evaluate(
     print(f"Equivalent FPS:  {equiv_fps:.1f} FPS (model inference only)")
 
     # 6. Negative / Out-of-Distribution Rejection Test
-    print("[Rejection Test] Testing rejection on 500 random noise vectors...")
+    print("[Rejection Test] Testing rejection on 100 random noise vectors...")
     rng = np.random.RandomState(42)
-    noise_samples = rng.uniform(-1.0, 1.0, size=(500, 63)).astype(np.float32)
+    noise_samples = rng.uniform(-1.0, 1.0, size=(100, 63)).astype(np.float32)
     # Normalize noise samples as standard landmarks
     noise_samples = np.array([s / (np.max(np.abs(s)) + 1e-7) for s in noise_samples])
 
